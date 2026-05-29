@@ -5,12 +5,18 @@ date: "2026-05-29"
 output: html_document
 ---
 
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 library(dplyr)
 library(ggplot2)
 library(knitr)
+```
+```{r}
 # Download clean, unzipped CSV directly from FRED
+# Clean URL string (removed the markdown link brackets)
+fred_url <- "[https://fred.stlouisfed.org/graph/fredgraph.csv?id=ARUR](https://fred.stlouisfed.org/graph/fredgraph.csv?id=ARUR)"
+raw_data <- read.csv(fred_url)
 fred_url <- "[https://fred.stlouisfed.org/graph/fredgraph.csv?id=ARUR](https://fred.stlouisfed.org/graph/fredgraph.csv?id=ARUR)"
 raw_data <- read.csv(fred_url)
 
