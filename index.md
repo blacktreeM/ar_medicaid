@@ -1,17 +1,51 @@
-# Arkansas Medicaid Policy and Medical Debt Shifts
-
-Welcome to the empirical analysis pipeline tracking consumer medical debt changes in Arkansas following the 2017 retroactive eligibility cuts and the 2018 work requirements.
-
-## Core Project Links
-* 📊 **[View the Full Empirical Analysis Dashboard](analysis)**
-* 💻 **[View the Source Code Repository](https://github.com/blacktreem/ar_medicaid)**
-
+---
+title: "Arkansas Macroeconomic Indicators Tracking"
+author: "Research Pipeline"
+date: "2026-05-29"
+output: html_document
 ---
 
-### Project Summary
-This research tracking site processes panel data spanning 2011 to 2023 to evaluate financial health indicators, combining data from:
-* **Urban Institute:** Credit Bureau medical debt tracking metrics.
-* **UKCPR:** National Welfare Database economic controls.
-* **US Census Bureau:** Intercensal population denominators.
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(dplyr)
+library(ggplot2)
+library(knitr)
+# Download clean, unzipped CSV directly from FRED
+fred_url <- "[https://fred.stlouisfed.org/graph/fredgraph.csv?id=ARUR](https://fred.stlouisfed.org/graph/fredgraph.csv?id=ARUR)"
+raw_data <- read.csv(fred_url)
 
-*Automated pipeline updated on: 2026-05-29*
+# Clean and filter data for a structured panel window
+unemployment_data <- raw_data %>%
+  rename(date = DATE, unemp_rate = ARUR) %>%
+  mutate(
+    date = as.Date(date),
+    unemp_rate = as.numeric(as.character(unemp_rate)),
+    year = as.numeric(format(date, "%Y"))
+  ) %>%
+  filter(year >= 2011 & year <= 2025) %>%
+  filter(!is.na(unemp_rate))
+
+# Generate annual averages for summary tables
+annual_summary <- unemployment_data %>%
+  group_by(year) %>%
+  summarise(mean_unemployment = mean(unemp_rate)) %>%
+  ungroup()
+kable(head(annual_summary, 10),
+      digits = 2,
+      col.names = c("Year", "Average Unemployment Rate (%)"),
+      caption = "Arkansas Annual Unemployment Summary (FRED Baseline)")
+
+ggplot(unemployment_data, aes(x = date, y = unemp_rate)) +
+  geom_line(color = "black", size = 0.8) +
+  scale_x_date(date_breaks = "2 years", date_labels = "%Y") +
+  labs(
+    x = "Timeline",
+    y = "Unemployment Rate (%)",
+    title = "Arkansas Unemployment Rate Trajectory",
+    subtitle = "Monthly Baseline Metrics (Seasonally Adjusted)"
+  ) +
+  theme_classic()
+
+# Save output structural asset
+ggsave("plot_arkansas_unemployment.png", height = 4, width = 7)
+```
