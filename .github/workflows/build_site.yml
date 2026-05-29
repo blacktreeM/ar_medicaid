@@ -13,6 +13,8 @@ jobs:
     steps:
       - name: Check out repo
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up R
         uses: r-lib/actions/setup-r@v2
@@ -22,7 +24,12 @@ jobs:
       - name: Set up Pandoc
         uses: r-lib/actions/setup-pandoc@v2
 
-      - name: Install Packages
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcurl4-openssl-dev libssl-dev libxml2-dev
+
+      - name: Install R Packages
         run: |
           Rscript -e 'install.packages(c("dplyr", "ggplot2", "knitr", "rmarkdown", "readxl", "tidyr"))'
 
@@ -36,4 +43,4 @@ jobs:
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git add index.html
           git commit -m "Auto-compile analysis website" || echo "No changes to commit"
-          git push origin || echo "No changes to commit"
+          git push origin HEAD:${{ github.ref_name }}
