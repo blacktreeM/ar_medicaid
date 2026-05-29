@@ -1,0 +1,118 @@
+---
+title: "Arkansas Medicaid Policy and Medical Debt Shifts"
+author: "Research Pipeline"
+date: "2026-05-29"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+# (Leave this setup block at the very top as it is)
+1. Introduction & Methodology
+... Some text explaining your project ...
+
+2. Automated Data Pipeline & Transformation
+This text introduces your data collection.
+
+#################################################################
+# ==========================================
+# Step 2A: Fetch Urban Institute Debt Data
+# ==========================================
+debt <- read_excel('[https://urban-data-catalog.s3.amazonaws.com/drupal-root-live/2024/07/02/changing_med_debt_landscape_state.xlsx](https://urban-data-catalog.s3.amazonaws.com/drupal-root-live/2024/07/02/changing_med_debt_landscape_state.xlsx)')
+
+# Explicitly map safe, standardized column names
+colnames(debt) <- c('year', 'fips', 'state', 'share', 'median',
+                    'share_white', 'median_white', 'share_nw', 'median_nw',
+                    'hospital', 'closure', 'uninsured', 'elderly', 'income')
+
+# Convert text variables safely to numeric attributes
+debt <- debt %>% 
+  mutate(across(-state, ~ as.numeric(as.character(.)))) %>%  
+  mutate(state_name = state, state = fips) %>% 
+  select(-fips)
+
+# ==========================================
+# Step 2B: Fetch UKCPR National Welfare Panel
+# ==========================================
+state <- read_excel('[https://ukcpr.uky.edu/sites/default/files/2026-02/ukcpr_national_welfare_data_1980_2024_jan26update.xlsx](https://ukcpr.uky.edu/sites/default/files/2026-02/ukcpr_national_welfare_data_1980_2024_jan26update.xlsx)', sheet = 2)
+
+state <- state %>% 
+  select(-state) %>%  
+  rename('medicaid' = "Medicaid beneficiaries",  
+         'state_unemp' = "Unemployment rate", 
+         'state_income' = "Personal income",
+         'state_poverty' = "Poverty Rate", 
+         'pop' = 'Population', 
+         'gdp' = "Gross State Product",
+         'state_governor' = "Governor is Democrat (1=Yes)") %>%  
+  select(state_name, year, pop, medicaid, contains('state_')) %>%
+  filter(year %in% 2011:2023) %>% 
+  mutate(state_governor = as.numeric(state_governor),
+         log_income = log(state_income), 
+         log_pop = log(pop))
+
+# ==========================================
+# Step 2C: Process Census Bureau Populations
+# ==========================================
+pop1 <- read.csv('[https://www2.census.gov/programs-surveys/popest/datasets/2010-2020/intercensal/state/asrh/sc-est2020int-alldata6.csv](https://www2.census.gov/programs-surveys/popest/datasets/2010-2020/intercensal/state/asrh/sc-est2020int-alldata6.csv)')
+pop2 <- pop1 # Replicating identical self-join match keys per your source layout
+mk <- intersect(colnames(pop1), colnames(pop2))
+
+pop <- pop1 %>% 
+  left_join(pop2, by = mk) %>% 
+  rename_with(tolower) %>% 
+  mutate(fips = state) %>%  
+  select(-sumlev, -region, -division, -name, -estimatesbase2010, -estimatesbase2020, -census2020pop)
+
+# Pivot demographic variables into a tidy panel structure
+pop <- pop %>% 
+  pivot_longer(cols = starts_with("popestimate"), names_to = "year", values_to = "pop") %>%  
+  mutate(year = gsub('popestimate', '', year), year = as.numeric(year))
+
+# Calculate stratified demographic denominators
+total_pop <- pop %>% 
+  filter(sex == 0 & origin == 0) %>%  
+  group_by(state, year) %>% 
+  summarise(total_pop = sum(pop)) %>% 
+  ungroup()
+
+treated <- pop %>% 
+  filter(age >= 30 & age < 50 & sex == 0 & origin == 0) %>%
+  group_by(state, year) %>% 
+  summarise(pop = sum(pop)) %>% 
+  ungroup() %>% 
+  rename('age3049' = 'pop')
+
+young    <- pop %>% filter(age <= 18 & sex == 0 & origin == 0) %>% group_by(state, year) %>% summarise(pop = sum(pop)) %>% ungroup() %>% rename('young' = 'pop')
+old      <- pop %>% filter(age >= 65 & sex == 0 & origin == 0) %>% group_by(state, year) %>% summarise(pop = sum(pop)) %>% ungroup() %>% rename('old' = 'pop')
+white    <- pop %>% filter(sex == 0 & origin == 1 & race == 1) %>% group_by(state, year) %>% summarise(pop = sum(pop)) %>% ungroup() %>% rename('white' = 'pop')
+black    <- pop %>% filter(sex == 0 & origin == 1 & race == 2) %>% group_by(state, year) %>% summarise(pop = sum(pop)) %>% ungroup() %>% rename('black' = 'pop')
+hispanic <- pop %>% filter(sex == 0 & origin == 2) %>% group_by(state, year) %>% summarise(pop = sum(pop)) %>% ungroup() %>% rename('hispanic' = 'pop')
+
+# Combine population aggregates
+POP <- total_pop %>%  
+  left_join(treated,  by = c('state', 'year')) %>%  
+  left_join(young,    by = c('state', 'year')) %>%  
+  left_join(old,      by = c('state', 'year')) %>%  
+  left_join(white,    by = c('state', 'year')) %>%  
+  left_join(black,    by = c('state', 'year')) %>%  
+  left_join(hispanic, by = c('state', 'year'))
+
+# Calculate structural population shares
+POP <- POP %>% 
+  mutate(white = white / total_pop, 
+         black = black / total_pop, 
+         hispanic = hispanic / total_pop,
+         pop_share = age3049 / total_pop, 
+         young = young / total_pop, 
+         old = old / total_pop)
+
+# ==========================================
+# Step 2D: Compile Final Analytical Dataset
+# ==========================================
+data_cleaned <- debt %>% 
+  left_join(state, by = c('state_name', 'year')) %>%
+  left_join(POP, by = c('state', 'year'))
+
+# Cache the processed object locally for downstream analytical processes
+save(data_cleaned, file = 'data.RDa')
+#################################################################
