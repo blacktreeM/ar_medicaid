@@ -2,8 +2,8 @@ name: Generate Plot and Deploy website
 
 on:
   push:
-    branches: [ "main" ] # Runs every time you update your code
-  workflow_dispatch: # Allows you to run it manually
+    branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
   build-and-deploy:
@@ -20,8 +20,16 @@ jobs:
       - name: Run R Script to generate plot
         run: Rscript generate_plot.R
 
+      - name: Commit and Push Plot
+        run: |
+          git config --local user.email "actions@github.com"
+          git config --local user.name "GitHub Actions"
+          git add my_plot.png
+          git commit -m "Update generated plot" || echo "No changes to commit"
+          git push
+
       - name: Deploy to GitHub Pages
         uses: JamesIves/github-pages-deploy-action@v4
         with:
-          folder: . # Deploys the current folder containing index.html and my_plot.png
-          branch: gh-pages # Puts the website assets on a special branch
+          folder: .
+          branch: gh-pages
