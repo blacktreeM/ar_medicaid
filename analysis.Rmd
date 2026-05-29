@@ -2,7 +2,7 @@
 title: "Arkansas Macroeconomic Indicators Tracking"
 author: "Research Pipeline"
 date: "2026-05-29"
-output: github_document
+output: html_document
 ---
 
 ```{r setup, include=FALSE}
