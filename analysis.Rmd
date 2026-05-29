@@ -1,5 +1,5 @@
 ---
-title: "Arkansas Medicaid Policy and Medical Debt Shifts"
+title: "Arkansas Macroeconomic Indicators Tracking"
 author: "Research Pipeline"
 date: "2026-05-29"
 output: github_document
@@ -7,156 +7,45 @@ output: github_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
-library(tidyr)
 library(dplyr)
-library(readxl)
 library(ggplot2)
 library(knitr)
-```
-```{r data_pipeline}
-# ==========================================
-# Step 2A: Fetch Urban Institute Debt Data
-# ==========================================
-debt <- read_excel('[https://urban-data-catalog.s3.amazonaws.com/drupal-root-live/2024/07/02/changing_med_debt_landscape_state.xlsx](https://urban-data-catalog.s3.amazonaws.com/drupal-root-live/2024/07/02/changing_med_debt_landscape_state.xlsx)')
+# Download clean, unzipped CSV directly from FRED
+fred_url <- "[https://fred.stlouisfed.org/graph/fredgraph.csv?id=ARUR](https://fred.stlouisfed.org/graph/fredgraph.csv?id=ARUR)"
+raw_data <- read.csv(fred_url)
 
-# Explicitly map safe, standardized column names
-colnames(debt) <- c('year', 'fips', 'state', 'share', 'median',
-                    'share_white', 'median_white', 'share_nw', 'median_nw',
-                    'hospital', 'closure', 'uninsured', 'elderly', 'income')
+# Clean and filter data for a structured panel window
+unemployment_data <- raw_data %>%
+  rename(date = DATE, unemp_rate = ARUR) %>%
+  mutate(
+    date = as.Date(date),
+    unemp_rate = as.numeric(as.character(unemp_rate)),
+    year = as.numeric(format(date, "%Y"))
+  ) %>%
+  filter(year >= 2011 & year <= 2025) %>%
+  filter(!is.na(unemp_rate))
 
-# Convert text variables safely to numeric attributes
-debt <- debt %>% 
-  mutate(across(-state, ~ as.numeric(as.character(.)))) %>%  
-  mutate(state_name = state, state = fips) %>% 
-  select(-fips)
-
-# ==========================================
-# Step 2B: Fetch UKCPR National Welfare Panel
-# ==========================================
-state <- read_excel('[https://ukcpr.uky.edu/sites/default/files/2026-02/ukcpr_national_welfare_data_1980_2024_jan26update.xlsx](https://ukcpr.uky.edu/sites/default/files/2026-02/ukcpr_national_welfare_data_1980_2024_jan26update.xlsx)', sheet = 2)
-
-state <- state %>% 
-  select(-state) %>%  
-  rename('medicaid' = "Medicaid beneficiaries",  
-         'state_unemp' = "Unemployment rate",  
-         'state_income' = "Personal income",
-         'state_poverty' = "Poverty Rate",  
-         'pop' = 'Population',  
-         'gdp' = "Gross State Product",
-         'state_governor' = "Governor is Democrat (1=Yes)") %>%  
-  select(state_name, year, pop, medicaid, contains('state_')) %>%
-  filter(year %in% 2011:2023) %>% 
-  mutate(state_governor = as.numeric(state_governor),
-         log_income = log(state_income), 
-         log_pop = log(pop))
-
-# ==========================================
-# Step 2C: Process Census Bureau Populations
-# ==========================================
-pop1 <- read.csv('[https://www2.census.gov/programs-surveys/popest/datasets/2010-2020/intercensal/state/asrh/sc-est2020int-alldata6.csv](https://www2.census.gov/programs-surveys/popest/datasets/2010-2020/intercensal/state/asrh/sc-est2020int-alldata6.csv)')
-pop2 <- pop1 
-mk <- intersect(colnames(pop1), colnames(pop2))
-
-pop <- pop1 %>% 
-  left_join(pop2, by = mk) %>% 
-  rename_with(tolower) %>% 
-  mutate(fips = state) %>%  
-  select(-sumlev, -region, -division, -name, -estimatesbase2010, -estimatesbase2020, -census2020pop)
-
-# Pivot demographic variables into a tidy panel structure
-pop <- pop %>% 
-  pivot_longer(cols = starts_with("popestimate"), names_to = "year", values_to = "pop") %>%  
-  mutate(year = gsub('popestimate', '', year), year = as.numeric(year))
-
-# Calculate stratified demographic denominators
-total_pop <- pop %>% 
-  filter(sex == 0 & origin == 0) %>%  
-  group_by(state, year) %>% 
-  summarise(total_pop = sum(pop)) %>% 
+# Generate annual averages for summary tables
+annual_summary <- unemployment_data %>%
+  group_by(year) %>%
+  summarise(mean_unemployment = mean(unemp_rate)) %>%
   ungroup()
+kable(head(annual_summary, 10),
+      digits = 2,
+      col.names = c("Year", "Average Unemployment Rate (%)"),
+      caption = "Arkansas Annual Unemployment Summary (FRED Baseline)")
 
-treated <- pop %>% 
-  filter(age >= 30 & age < 50 & sex == 0 & origin == 0) %>%
-  group_by(state, year) %>% 
-  summarise(pop = sum(pop)) %>% 
-  ungroup() %>% 
-  rename('age3049' = 'pop')
-
-young    <- pop %>% filter(age <= 18 & sex == 0 & origin == 0) %>% group_by(state, year) %>% summarise(pop = sum(pop)) %>% ungroup() %>% rename('young' = 'pop')
-old      <- pop %>% filter(age >= 65 & sex == 0 & origin == 0) %>% group_by(state, year) %>% summarise(pop = sum(pop)) %>% ungroup() %>% rename('old' = 'pop')
-white    <- pop %>% filter(sex == 0 & origin == 1 & race == 1) %>% group_by(state, year) %>% summarise(pop = sum(pop)) %>% ungroup() %>% rename('white' = 'pop')
-black    <- pop %>% filter(sex == 0 & origin == 1 & race == 2) %>% group_by(state, year) %>% summarise(pop = sum(pop)) %>% ungroup() %>% rename('black' = 'pop')
-hispanic <- pop %>% filter(sex == 0 & origin == 2) %>% group_by(state, year) %>% summarise(pop = sum(pop)) %>% ungroup() %>% rename('hispanic' = 'pop')
-
-# Combine population aggregates
-POP <- total_pop %>%  
-  left_join(treated,  by = c('state', 'year')) %>%  
-  left_join(young,    by = c('state', 'year')) %>%  
-  left_join(old,      by = c('state', 'year')) %>%  
-  left_join(white,    by = c('state', 'year')) %>%  
-  left_join(black,    by = c('state', 'year')) %>%  
-  left_join(hispanic, by = c('state', 'year'))
-
-# Calculate structural population shares
-POP <- POP %>% 
-  mutate(white = white / total_pop, 
-         black = black / total_pop, 
-         hispanic = hispanic / total_pop,
-         pop_share = age3049 / total_pop, 
-         young = young / total_pop, 
-         old = old / total_pop)
-
-# ==========================================
-# Step 2D: Compile Final Analytical Dataset
-# ==========================================
-data_cleaned <- debt %>% 
-  left_join(state, by = c('state_name', 'year')) %>%
-  left_join(POP, by = c('state', 'year'))
-
-# Cache the processed object locally for downstream analytical processes
-save(data_cleaned, file = 'data.RDa')
-
-# ==========================================
-# Step 3: Generate Summary Preview Table
-# ==========================================
-preview_data <- data_cleaned %>% 
-  filter(state_name %in% c("AR", "TX", "MO", "KY")) %>% 
-  select(state_name, year, share, median, state_unemp, white) %>% 
-  arrange(state_name, year) %>% 
-  head(10)
-
-kable(preview_data, 
-      digits = 3, 
-      col.names = c("State", "Year", "Debt Share", "Median Debt ($)", "Unemployment Rate", "White Share"),
-      caption = "Master Panel Processed Preview")
-
-# ==========================================
-# Step 4: Empirical Visualizations
-# ==========================================
-us <- read_excel('[https://urban-data-catalog.s3.amazonaws.com/drupal-root-live/2024/07/02/changing_med_debt_landscape_national.xlsx](https://urban-data-catalog.s3.amazonaws.com/drupal-root-live/2024/07/02/changing_med_debt_landscape_national.xlsx)')
-colnames(us) <- colnames(debt)
-us <- us %>% 
-  mutate(across(-state, ~ as.numeric(as.character(.)))) %>% 
-  filter(year < 2023)
-
-ar <- data_cleaned %>% 
-  filter(state_name == 'AR' & year < 2023) %>% 
-  mutate(medicaid = medicaid / pop) %>%  
-  select(year, share, median, medicaid)
-
-ggplot() +  
-  geom_rect(aes(xmin = 2018, xmax = 2019, ymin = -Inf, ymax = Inf), fill = "grey90", alpha = 0.5) +
-  geom_text(aes(x = 2018.1, y = max(ar$share, na.rm = TRUE) * 0.95, 
-                label = "Medicaid Work Requirement\nPeriod (June 2018 - March 2019)"), color = "black", size = 3, hjust = 0) +
-  geom_line(data = ar, aes(x = year, y = share), size = 1.1, color = 'black') +  
-  geom_line(data = us, aes(x = year, y = share), size = 1.1, color = 'darkgrey') +
-  geom_vline(xintercept = 2018, linetype = "dashed", color = "grey50") +  
-  geom_vline(xintercept = 2019, linetype = "dashed", color = "grey50") +
-  geom_text(data = subset(ar, year == max(year)), aes(x = year, y = share, label = "Arkansas"), hjust = -0.15, vjust = 0.5, color = "black") +
-  geom_text(data = subset(us, year == max(year)), aes(x = year, y = share, label = "US Average"), hjust = -0.15, vjust = 0.5, color = "black") +
-  scale_x_continuous(breaks = min(ar$year):max(ar$year), labels = min(ar$year):max(ar$year), limits = c(min(ar$year), max(ar$year) + 2)) +  
-  labs(x = "Year", y = "Population share with medical debt in collections") +
+ggplot(unemployment_data, aes(x = date, y = unemp_rate)) +
+  geom_line(color = "black", size = 0.8) +
+  scale_x_date(date_breaks = "2 years", date_labels = "%Y") +
+  labs(
+    x = "Timeline",
+    y = "Unemployment Rate (%)",
+    title = "Arkansas Unemployment Rate Trajectory",
+    subtitle = "Monthly Baseline Metrics (Seasonally Adjusted)"
+  ) +
   theme_classic()
 
-ggsave('plot_debt_share.png', height = 4, width = 7)
+# Save output structural asset
+ggsave("plot_arkansas_unemployment.png", height = 4, width = 7)
 ```
